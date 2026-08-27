@@ -156,15 +156,10 @@
         statusEl.textContent = `🟢 已連線實時房間：${roomId}`;
         statusEl.className = 'sync-status sync-online';
 
-        if (data && !isUpdatingFromCloud) {
-            // 防跳游標機制：只有當沒有在焦點輸入框時才完全重繪
-            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
-                isUpdatingFromCloud = true;
-                renderCloudData(data);
-                isUpdatingFromCloud = false;
-            } else {
-                calculateBudget();
-            }
+        if (data) {
+            isUpdatingFromCloud = true;
+            renderCloudData(data);
+            isUpdatingFromCloud = false;
         }
     });
 
@@ -208,19 +203,25 @@
     }
 
     function renderCloudData(data) {
-        document.getElementById('destination').value = data.destination || '';
-        document.getElementById('trip-start-date').value = data.startDate || '';
-        document.getElementById('trip-end-date').value = data.endDate || '';
-        document.getElementById('currency').value = data.currency || 'JPY ';
-        document.getElementById('member-names').value = data.members || 'Jay, Cathy, Agnes, Louisa';
+        // 如果使用者正在輸入欄位，不強行更新避免跳光標，但計算結果會更新
+        const activeElem = document.activeElement;
+        const isEditing = activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'SELECT');
 
-        currentMembers = (data.members || '').split(/[,，]/).map(n => n.trim()).filter(n => n !== "");
+        if (!isEditing) {
+            document.getElementById('destination').value = data.destination || '';
+            document.getElementById('trip-start-date').value = data.startDate || '';
+            document.getElementById('trip-end-date').value = data.endDate || '';
+            document.getElementById('currency').value = data.currency || 'JPY ';
+            document.getElementById('member-names').value = data.members || 'Jay, Cathy, Agnes, Louisa';
 
-        const container = document.getElementById('days-container');
-        container.innerHTML = '';
+            currentMembers = (data.members || '').split(/[,，]/).map(n => n.trim()).filter(n => n !== "");
 
-        if (data.days && data.days.length > 0) {
-            data.days.forEach(day => renderDayBlock(day));
+            const container = document.getElementById('days-container');
+            container.innerHTML = '';
+
+            if (data.days && data.days.length > 0) {
+                data.days.forEach(day => renderDayBlock(day));
+            }
         }
         calculateBudget();
     }
@@ -291,7 +292,7 @@
 
         currentMembers.forEach(m => {
             payerSelect.innerHTML += `<option value="${m}">${m}</option>`;
-            const isChecked = savedData ? savedData.shares.includes(m) : true;
+            const isChecked = savedData ? (savedData.shares && savedData.shares.includes(m)) : true;
             shareDiv.innerHTML += `
                 <label class="checkbox-group">
                     <input type="checkbox" class="member-checkbox" value="${m}" ${isChecked ? 'checked' : ''} onchange="pushDataToCloud()">
@@ -300,8 +301,8 @@
         });
 
         if (savedData) {
-            itemDiv.querySelector('.exp-category').value = savedData.category;
-            payerSelect.value = savedData.payer;
+            itemDiv.querySelector('.exp-category').value = savedData.category || 'Meals';
+            payerSelect.value = savedData.payer || currentMembers[0];
         }
     }
 
@@ -404,7 +405,7 @@
 
     // 匯出 Excel (CSV) 功能
     function exportToCSV() {
-        let csvContent = "\uFEFF"; // 加入 UTF-8 BOM，防止 Excel 開啟亂碼
+        let csvContent = "\uFEFF"; // UTF-8 BOM 防亂碼
         csvContent += "日期,分類,描述,金額,付款人,參與分攤人\n";
 
         document.querySelectorAll('.expense-item').forEach(item => {
