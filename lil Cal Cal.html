@@ -67,7 +67,7 @@
 <body>
 
 <div class="container">
-    <h1>旅行分賬計算器 ⚡ 實時連線</h1>
+    <h1>旅行分賬計算器 實時連線</h1>
     <div id="sync-status" class="sync-status sync-offline">連線中...</div>
 
     <!-- 1. 基本資訊 -->
@@ -100,9 +100,9 @@
     <!-- 2. 費用細項 -->
     <div class="section-title">
         <span>2. 費用細項明細</span>
-        <button class="btn btn-excel" onclick="exportToCSV()">📊 匯出 Excel (CSV)</button>
+        <button class="btn btn-excel" onclick="exportToCSV()">匯出 Excel (CSV)</button>
     </div>
-    <button class="btn btn-add-day" onclick="addNewDayBlock()">➕ 新增新一天 (Day)</button>
+    <button class="btn btn-add-day" onclick="addNewDayBlock()">新增新一天 (Day)</button>
     <div id="days-container"></div>
 
     <!-- 3. 結算報告 -->
@@ -113,7 +113,10 @@
             <span class="total-highlight"><span class="curr-symbol">JPY </span><span id="res-total">0.00</span></span>
         </div>
         
-        <div style="font-size: 14px; font-weight: bold; margin-top: 15px;">每人當日花費與結算明細：</div>
+        <div style="font-size: 14px; font-weight: bold; margin-top: 15px;">每人總花費（個人應付與代墊）：</div>
+        <div id="person-total-report" class="report-box"></div>
+
+        <div style="font-size: 14px; font-weight: bold; margin-top: 15px;">每人結算明細：</div>
         <div id="individual-report" class="report-box"></div>
 
         <div style="font-size: 14px; font-weight: bold; margin-top: 15px; color: #e74c3c;">清賬指引（誰給誰多少錢）：</div>
@@ -153,7 +156,7 @@
     roomRef.on('value', (snapshot) => {
         const data = snapshot.val();
         const statusEl = document.getElementById('sync-status');
-        statusEl.textContent = `🟢 已連線實時房間：${roomId}`;
+        statusEl.textContent = `已連線實時房間：${roomId}`;
         statusEl.className = 'sync-status sync-online';
 
         if (data) {
@@ -203,7 +206,6 @@
     }
 
     function renderCloudData(data) {
-        // 如果使用者正在輸入欄位，不強行更新避免跳光標，但計算結果會更新
         const activeElem = document.activeElement;
         const isEditing = activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'SELECT');
 
@@ -244,7 +246,7 @@
                 <input type="date" class="day-date-picker" value="${dayData.date}" onchange="pushDataToCloud()">
             </div>
             <div class="day-expenses-list"></div>
-            <button class="btn" style="background-color:#4a5568; font-size:12px; margin-top:5px;" onclick="addExpenseRow(this)">➕ 新增明細</button>
+            <button class="btn" style="background-color:#4a5568; font-size:12px; margin-top:5px;" onclick="addExpenseRow(this)">新增明細</button>
         `;
         container.appendChild(dayBlock);
 
@@ -335,14 +337,25 @@
 
         document.getElementById('res-total').textContent = total.toFixed(2);
 
-        // 結算明細
+        // 每人總花費 (個人消費金額)
+        const personTotalReport = document.getElementById('person-total-report');
+        personTotalReport.innerHTML = '';
+        currentMembers.forEach(m => {
+            personTotalReport.innerHTML += `
+                <div class="settle-row">
+                    <span><strong>${m}</strong></span>
+                    <span>應付花費: <strong>${curr}${owedMap[m].toFixed(2)}</strong> (先代墊: ${curr}${paidMap[m].toFixed(2)})</span>
+                </div>`;
+        });
+
+        // 結算明細 (應收/應付)
         const indReport = document.getElementById('individual-report');
         indReport.innerHTML = '';
         currentMembers.forEach(m => {
             const net = paidMap[m] - owedMap[m];
             let tag = net > 0 ? `<span class="tag-get">（應收回 ${curr}${net.toFixed(2)}）</span>` : 
                       net < 0 ? `<span class="tag-give">（應補繳 ${curr}${Math.abs(net).toFixed(2)}）</span>` : '（平帳）';
-            indReport.innerHTML += `<div class="settle-row"><span>${m} (已付 ${curr}${paidMap[m].toFixed(2)})</span>${tag}</div>`;
+            indReport.innerHTML += `<div class="settle-row"><span>${m}</span>${tag}</div>`;
         });
 
         // 轉帳指引
@@ -364,7 +377,6 @@
             if (Math.abs(creditors[j].balance) < 0.01) j++;
         }
 
-        // 更新 Chart.js 圖表
         updateChart(categoryMap);
     }
 
@@ -403,22 +415,80 @@
         }
     }
 
-    // 匯出 Excel (CSV) 功能
+    // 匯出 Excel (CSV) - 根據截圖模板樣式 (橫向分類 + Total + 底欄 Sum) + 人名 X 軸統計表
     function exportToCSV() {
-        let csvContent = "\uFEFF"; // UTF-8 BOM 防亂碼
-        csvContent += "日期,分類,描述,金額,付款人,參與分攤人\n";
+        let csvContent = "\uFEFF"; // UTF-8 BOM 防止亂碼
+
+        // 1. 根據截圖模板格式匯出明細表
+        csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL\n";
+
+        let totalTrans = 0, totalLodging = 0, totalMeals = 0, totalEnter = 0, totalOthers = 0, grandTotal = 0;
+        let paidMap = {}, owedMap = {};
+        currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
 
         document.querySelectorAll('.expense-item').forEach(item => {
             const date = item.querySelector('.exp-date').value || '';
-            const category = item.querySelector('.exp-category').value || '';
             const desc = `"${(item.querySelector('.exp-desc').value || '').replace(/"/g, '""')}"`;
-            const amount = item.querySelector('.exp-amount').value || '0';
+            const amountVal = parseFloat(item.querySelector('.exp-amount').value) || 0;
             const payer = item.querySelector('.exp-payer').value || '';
-            const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value).join('; ');
+            const category = item.querySelector('.exp-category').value || 'Others';
+            const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
 
-            csvContent += `${date},${category},${desc},${amount},${payer},"${shares}"\n`;
+            let trans = 0, lodging = 0, meals = 0, enter = 0, others = 0;
+
+            if (amountVal > 0) {
+                // 依據分類填入相應的欄位
+                if (category === 'Transportation') { trans = amountVal; totalTrans += amountVal; }
+                else if (category === 'Lodging') { lodging = amountVal; totalLodging += amountVal; }
+                else if (category === 'Meals') { meals = amountVal; totalMeals += amountVal; }
+                else if (category === 'Entertainment') { enter = amountVal; totalEnter += amountVal; }
+                else { others = amountVal; totalOthers += amountVal; }
+
+                grandTotal += amountVal;
+
+                if (paidMap[payer] !== undefined) paidMap[payer] += amountVal;
+                if (shares.length > 0) {
+                    const shareAmt = amountVal / shares.length;
+                    shares.forEach(s => { if (owedMap[s] !== undefined) owedMap[s] += shareAmt; });
+                }
+            }
+
+            const strTrans = trans ? `$${trans.toFixed(2)}` : '';
+            const strLodging = lodging ? `$${lodging.toFixed(2)}` : '';
+            const strMeals = meals ? `$${meals.toFixed(2)}` : '';
+            const strEnter = enter ? `$${enter.toFixed(2)}` : '';
+            const strOthers = others ? `$${others.toFixed(2)}` : '';
+            const strTotal = `$${amountVal.toFixed(2)}`;
+
+            csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal}\n`;
         });
 
+        // 補上底部的 Total 行 (如圖片所示)
+        csvContent += `Total,,,$${totalTrans.toFixed(2)},$${totalLodging.toFixed(2)},$${totalMeals.toFixed(2)},$${totalEnter.toFixed(2)},$${totalOthers.toFixed(2)},$${grandTotal.toFixed(2)}\n\n`;
+
+        // 2. 以人名為 X 軸（直欄標題）的個人統計表
+        csvContent += "=== 成員消費與結算統計表 (X軸: 人名) ===\n";
+        csvContent += "統計項目," + currentMembers.join(",") + "\n";
+
+        let rowPaid = "實際代墊金額(Paid)";
+        let rowOwed = "個人應付總額(Expense)";
+        let rowNet = "最終應收/應付(Net Balance)";
+
+        currentMembers.forEach(m => {
+            const paid = paidMap[m] || 0;
+            const owed = owedMap[m] || 0;
+            const net = paid - owed;
+
+            rowPaid += `,$${paid.toFixed(2)}`;
+            rowOwed += `,$${owed.toFixed(2)}`;
+            rowNet += `,$${net.toFixed(2)}`;
+        });
+
+        csvContent += rowPaid + "\n";
+        csvContent += rowOwed + "\n";
+        csvContent += rowNet + "\n";
+
+        // 下載 CSV 檔案
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
