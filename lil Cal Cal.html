@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>旅行自動分賬計算器 (實時同步版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --secondary-color: #2ecc71;
+            --warning-color: #e74c3c;
+            --bg-color: #f5f7fa;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text-color); padding: 20px 10px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 800px; background: var(--card-bg); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); }
+        h1 { text-align: center; margin-bottom: 20px; color: #2c3e50; font-size: 24px; }
+        
+        .sync-status { text-align: center; font-size: 13px; font-weight: bold; padding: 6px; border-radius: 6px; margin-bottom: 15px; }
+        .sync-online { background-color: #c6f6d5; color: #22543d; }
+        .sync-offline { background-color: #fed7d7; color: #742a2a; }
+
+        .section-title { font-size: 16px; font-weight: bold; margin: 20px 0 15px 0; padding-bottom: 5px; border-bottom: 2px solid #edf2f7; color: #4a5568; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 6px; font-size: 14px; color: #4a5568; font-weight: 500; }
+        input, select { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 14px; outline: none; }
+        
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .day-block { background: #f8fafc; border: 2px dashed #cbd5e0; border-radius: 12px; padding: 15px; margin-bottom: 20px; }
+        .day-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
+        .day-title { font-size: 16px; font-weight: bold; color: #2b6cb0; }
+        .expense-item { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px; margin-bottom: 12px; position: relative; }
+        .expense-inputs { display: grid; grid-template-columns: 1fr 1fr 1.2fr 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+
+        @media (max-width: 700px) {
+            .expense-inputs, .info-grid { grid-template-columns: 1fr; }
+        }
+
+        .share-container { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px; background: #fff; border: 1px dashed #cbd5e0; border-radius: 6px; }
+        .checkbox-group { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+        .checkbox-group input { width: auto; }
+
+        .btn { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 14px; }
+        .btn-add-day { background-color: #319795; width: 100%; font-size: 15px; font-weight: bold; margin-bottom: 15px; }
+        .btn-delete { background: none; color: var(--warning-color); border: none; position: absolute; top: 12px; right: 12px; cursor: pointer; font-weight: bold; }
+
+        .result-board { background: #edf2f7; border-radius: 12px; padding: 20px; margin-top: 25px; }
+        .result-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .total-highlight { color: var(--primary-color); font-size: 22px; font-weight: bold; }
+        .report-box { background: white; padding: 12px; border-radius: 8px; margin-top: 8px; font-size: 13px; }
+        .settle-row { padding: 6px 0; border-bottom: 1px dashed #edf2f7; display: flex; justify-content: space-between; }
+        .tag-give { color: var(--warning-color); font-weight: bold; }
+        .tag-get { color: var(--secondary-color); font-weight: bold; }
+        
+        .chart-card { background: white; padding: 15px; border-radius: 8px; text-align: center; margin-top: 15px; max-width: 400px; margin: 15px auto 0 auto; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>旅行分賬計算器 ⚡ 實時連線</h1>
+    <div id="sync-status" class="sync-status sync-offline">連線中...</div>
+
+    <div class="section-title">1. 本次旅程資訊</div>
+    <div class="form-group">
+        <label>目的地</label>
+        <input type="text" id="destination" placeholder="例如：東京" oninput="pushDataToCloud()">
+    </div>
+    
+    <div class="info-grid">
+        <div class="form-group">
+            <label>旅行日期</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="date" id="trip-start-date" onchange="pushDataToCloud()">
+                <span>至</span>
+                <input type="date" id="trip-end-date" onchange="pushDataToCloud()">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>結算貨幣</label>
+            <input type="text" id="currency" value="JPY " oninput="pushDataToCloud()">
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label>成員名單 (用逗號隔開)</label>
+        <input type="text" id="member-names" value="Jay, Cathy, Agnes, Louisa" onchange="pushDataToCloud()">
+    </div>
+
+    <div class="section-title">2. 費用細項明細</div>
+    <button class="btn btn-add-day" onclick="addNewDayBlock()">➕ 新增新一天 (Day)</button>
+    <div id="days-container"></div>
+
+    <div class="result-board">
+        <div style="font-size: 16px; font-weight: bold; margin-bottom: 12px;">結算報告</div>
+        <div class="result-item">
+            <span>全團總花費：</span>
+            <span class="total-highlight"><span class="curr-symbol">JPY </span><span id="res-total">0.00</span></span>
+        </div>
+        
+        <div style="font-size: 14px; font-weight: bold; margin-top: 15px;">每人當日花費與結算明細：</div>
+        <div id="individual-report" class="report-box"></div>
+
+        <div style="font-size: 14px; font-weight: bold; margin-top: 15px; color: #e74c3c;">清賬指引（誰給誰多少錢）：</div>
+        <div id="settlement-report" class="report-box" style="background: #fff5f5; border: 1px solid #fed7d7;"></div>
+
+        <div class="chart-card">
+            <canvas id="categoryChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 你的 Firebase 金鑰設定
+    const firebaseConfig = {
+        apiKey: "AIzaSyCdKBfHHvqxHP-t-v1HYGli3zj9mc2-vac",
+        authDomain: "lazycalculatorforlazypeople.firebaseapp.com",
+        databaseURL: "https://lazycalculatorforlazypeople-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "lazycalculatorforlazypeople",
+        storageBucket: "lazycalculatorforlazypeople.firebasestorage.app",
+        messagingSenderId: "601670250601",
+        appId: "1:601670250601:web:3ca560433fbb3a40ecb2f8",
+        measurementId: "G-YVC7JPBQV2"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 支援以 URL 參數建立不同房間，例如：yourdomain.com/?room=tokyo2026
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room') || 'default_room';
+    const roomRef = db.ref('trips/' + roomId);
+
+    let isUpdatingFromCloud = false;
+    let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa"];
+
+    // 監聽雲端資料變更 (實時同步 Core)
+    roomRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        const statusEl = document.getElementById('sync-status');
+        statusEl.textContent = `🟢 已連線實時房間：${roomId}`;
+        statusEl.className = 'sync-status sync-online';
+
+        if (data) {
+            isUpdatingFromCloud = true;
+            renderCloudData(data);
+            isUpdatingFromCloud = false;
+        }
+    });
+
+    function pushDataToCloud() {
+        if (isUpdatingFromCloud) return;
+
+        const membersInput = document.getElementById('member-names').value;
+        currentMembers = membersInput.split(/[,，]/).map(n => n.trim()).filter(n => n !== "");
+
+        const tripData = {
+            destination: document.getElementById('destination').value,
+            startDate: document.getElementById('trip-start-date').value,
+            endDate: document.getElementById('trip-end-date').value,
+            currency: document.getElementById('currency').value,
+            members: membersInput,
+            days: []
+        };
+
+        document.querySelectorAll('.day-block').forEach((dayBlock, index) => {
+            const dayDate = dayBlock.querySelector('.day-date-picker').value;
+            const expenses = [];
+
+            dayBlock.querySelectorAll('.expense-item').forEach(item => {
+                const checkedBoxes = item.querySelectorAll('.member-checkbox:checked');
+                expenses.push({
+                    id: item.id,
+                    date: item.querySelector('.exp-date').value,
+                    category: item.querySelector('.exp-category').value,
+                    desc: item.querySelector('.exp-desc').value,
+                    amount: item.querySelector('.exp-amount').value,
+                    payer: item.querySelector('.exp-payer').value,
+                    shares: Array.from(checkedBoxes).map(cb => cb.value)
+                });
+            });
+
+            tripData.days.push({ dayNum: index + 1, date: dayDate, expenses });
+        });
+
+        roomRef.set(tripData);
+        calculateBudget();
+    }
+
+    function renderCloudData(data) {
+        document.getElementById('destination').value = data.destination || '';
+        document.getElementById('trip-start-date').value = data.startDate || '';
+        document.getElementById('trip-end-date').value = data.endDate || '';
+        document.getElementById('currency').value = data.currency || 'JPY ';
+        document.getElementById('member-names').value = data.members || 'Jay, Cathy, Agnes, Louisa';
+
+        currentMembers = (data.members || '').split(/[,，]/).map(n => n.trim()).filter(n => n !== "");
+
+        const container = document.getElementById('days-container');
+        container.innerHTML = '';
+
+        if (data.days && data.days.length > 0) {
+            data.days.forEach(day => renderDayBlock(day));
+        }
+        calculateBudget();
+    }
+
+    function addNewDayBlock() {
+        const container = document.getElementById('days-container');
+        const dayCount = container.querySelectorAll('.day-block').length + 1;
+        const today = new Date().toISOString().split('T')[0];
+        renderDayBlock({ dayNum: dayCount, date: today, expenses: [] });
+        pushDataToCloud();
+    }
+
+    function renderDayBlock(dayData) {
+        const container = document.getElementById('days-container');
+        const dayBlock = document.createElement('div');
+        dayBlock.className = 'day-block';
+        dayBlock.innerHTML = `
+            <div class="day-header">
+                <div class="day-title">Day ${dayData.dayNum}</div>
+                <input type="date" class="day-date-picker" value="${dayData.date}" onchange="pushDataToCloud()">
+            </div>
+            <div class="day-expenses-list"></div>
+            <button class="btn" style="background-color:#4a5568; font-size:12px; margin-top:5px;" onclick="addExpenseRow(this)">➕ 新增明細</button>
+        `;
+        container.appendChild(dayBlock);
+
+        const expList = dayBlock.querySelector('.day-expenses-list');
+        if (dayData.expenses) {
+            dayData.expenses.forEach(exp => addExpenseRow(expList, exp));
+        }
+    }
+
+    function addExpenseRow(targetEl, savedData = null) {
+        let expList = targetEl.classList.contains('day-expenses-list') ? targetEl : targetEl.closest('.day-block').querySelector('.day-expenses-list');
+        const rowId = savedData ? savedData.id : ('row_' + Date.now());
+
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'expense-item';
+        itemDiv.id = rowId;
+
+        itemDiv.innerHTML = `
+            <button class="btn-delete" onclick="this.closest('.expense-item').remove(); pushDataToCloud();">刪除</button>
+            <div class="expense-inputs">
+                <div><label>日期</label><input type="date" class="exp-date" value="${savedData ? savedData.date : ''}" onchange="pushDataToCloud()"></div>
+                <div><label>分類</label>
+                    <select class="exp-category" onchange="pushDataToCloud()">
+                        <option value="Meals">餐飲</option>
+                        <option value="Transportation">交通</option>
+                        <option value="Lodging">住宿</option>
+                        <option value="Entertainment">娛樂</option>
+                        <option value="Others">其他</option>
+                    </select>
+                </div>
+                <div><label>描述</label><input type="text" class="exp-desc" value="${savedData ? savedData.desc : ''}" oninput="pushDataToCloud()"></div>
+                <div><label>金額</label><input type="number" class="exp-amount" value="${savedData ? savedData.amount : ''}" oninput="pushDataToCloud()"></div>
+                <div><label>誰付的</label><select class="exp-payer" onchange="pushDataToCloud()"></select></div>
+            </div>
+            <div>
+                <label style="font-size:12px;">誰分攤：</label>
+                <div class="share-container"></div>
+            </div>
+        `;
+
+        expList.appendChild(itemDiv);
+
+        const payerSelect = itemDiv.querySelector('.exp-payer');
+        const shareDiv = itemDiv.querySelector('.share-container');
+
+        currentMembers.forEach(m => {
+            payerSelect.innerHTML += `<option value="${m}">${m}</option>`;
+            const isChecked = savedData ? savedData.shares.includes(m) : true;
+            shareDiv.innerHTML += `
+                <label class="checkbox-group">
+                    <input type="checkbox" class="member-checkbox" value="${m}" ${isChecked ? 'checked' : ''} onchange="pushDataToCloud()">
+                    <span>${m}</span>
+                </label>`;
+        });
+
+        if (savedData) {
+            itemDiv.querySelector('.exp-category').value = savedData.category;
+            payerSelect.value = savedData.payer;
+        }
+    }
+
+    function calculateBudget() {
+        const curr = document.getElementById('currency').value || '$';
+        document.querySelectorAll('.curr-symbol').forEach(el => el.textContent = curr);
+
+        let total = 0;
+        let paidMap = {}, owedMap = {};
+        currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
+
+        document.querySelectorAll('.expense-item').forEach(item => {
+            const amt = parseFloat(item.querySelector('.exp-amount').value) || 0;
+            const payer = item.querySelector('.exp-payer').value;
+            const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
+
+            if (amt > 0) {
+                total += amt;
+                if (paidMap[payer] !== undefined) paidMap[payer] += amt;
+                if (shares.length > 0) {
+                    const shareAmt = amt / shares.length;
+                    shares.forEach(s => { if (owedMap[s] !== undefined) owedMap[s] += shareAmt; });
+                }
+            }
+        });
+
+        document.getElementById('res-total').textContent = total.toFixed(2);
+
+        const indReport = document.getElementById('individual-report');
+        indReport.innerHTML = '';
+        currentMembers.forEach(m => {
+            const net = paidMap[m] - owedMap[m];
+            let tag = net > 0 ? `<span class="tag-get">（應收回 ${curr}${net.toFixed(2)}）</span>` : 
+                      net < 0 ? `<span class="tag-give">（應補繳 ${curr}${Math.abs(net).toFixed(2)}）</span>` : '（平帳）';
+            indReport.innerHTML += `<div class="settle-row"><span>${m} (已付 ${curr}${paidMap[m].toFixed(2)})</span>${tag}</div>`;
+        });
+
+        const settleReport = document.getElementById('settlement-report');
+        settleReport.innerHTML = '';
+        let debtors = [], creditors = [];
+        currentMembers.forEach(m => {
+            let bal = paidMap[m] - owedMap[m];
+            if (bal < -0.01) debtors.push({ name: m, balance: bal });
+            if (bal > 0.01) creditors.push({ name: m, balance: bal });
+        });
+
+        let i = 0, j = 0;
+        while (i < debtors.length && j < creditors.length) {
+            let amt = Math.min(Math.abs(debtors[i].balance), creditors[j].balance);
+            settleReport.innerHTML += `<div class="settle-row"><span><strong>${debtors[i].name}</strong> 應付給 <strong>${creditors[j].name}</strong></span> <span class="tag-give">${curr}${amt.toFixed(2)}</span></div>`;
+            debtors[i].balance += amt; creditors[j].balance -= amt;
+            if (Math.abs(debtors[i].balance) < 0.01) i++;
+            if (Math.abs(creditors[j].balance) < 0.01) j++;
+        }
+    }
+</script>
+</body>
+</html>
