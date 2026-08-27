@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>旅行自動分賬計算器 (實時同步版)</title>
+    <!-- 引入 Chart.js 與 Firebase SDK -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
@@ -28,7 +28,7 @@
         .sync-online { background-color: #c6f6d5; color: #22543d; }
         .sync-offline { background-color: #fed7d7; color: #742a2a; }
 
-        .section-title { font-size: 16px; font-weight: bold; margin: 20px 0 15px 0; padding-bottom: 5px; border-bottom: 2px solid #edf2f7; color: #4a5568; }
+        .section-title { font-size: 16px; font-weight: bold; margin: 20px 0 15px 0; padding-bottom: 5px; border-bottom: 2px solid #edf2f7; color: #4a5568; display: flex; justify-content: space-between; align-items: center; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 6px; font-size: 14px; color: #4a5568; font-weight: 500; }
         input, select { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 14px; outline: none; }
@@ -50,6 +50,7 @@
 
         .btn { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 14px; }
         .btn-add-day { background-color: #319795; width: 100%; font-size: 15px; font-weight: bold; margin-bottom: 15px; }
+        .btn-excel { background-color: #27ae60; padding: 6px 12px; font-size: 13px; }
         .btn-delete { background: none; color: var(--warning-color); border: none; position: absolute; top: 12px; right: 12px; cursor: pointer; font-weight: bold; }
 
         .result-board { background: #edf2f7; border-radius: 12px; padding: 20px; margin-top: 25px; }
@@ -69,10 +70,11 @@
     <h1>旅行分賬計算器 ⚡ 實時連線</h1>
     <div id="sync-status" class="sync-status sync-offline">連線中...</div>
 
+    <!-- 1. 基本資訊 -->
     <div class="section-title">1. 本次旅程資訊</div>
     <div class="form-group">
         <label>目的地</label>
-        <input type="text" id="destination" placeholder="例如：東京" oninput="pushDataToCloud()">
+        <input type="text" id="destination" placeholder="例如：東京" onchange="pushDataToCloud()">
     </div>
     
     <div class="info-grid">
@@ -86,7 +88,7 @@
         </div>
         <div class="form-group">
             <label>結算貨幣</label>
-            <input type="text" id="currency" value="JPY " oninput="pushDataToCloud()">
+            <input type="text" id="currency" value="JPY " onchange="pushDataToCloud()">
         </div>
     </div>
 
@@ -95,10 +97,15 @@
         <input type="text" id="member-names" value="Jay, Cathy, Agnes, Louisa" onchange="pushDataToCloud()">
     </div>
 
-    <div class="section-title">2. 費用細項明細</div>
+    <!-- 2. 費用細項 -->
+    <div class="section-title">
+        <span>2. 費用細項明細</span>
+        <button class="btn btn-excel" onclick="exportToCSV()">📊 匯出 Excel (CSV)</button>
+    </div>
     <button class="btn btn-add-day" onclick="addNewDayBlock()">➕ 新增新一天 (Day)</button>
     <div id="days-container"></div>
 
+    <!-- 3. 結算報告 -->
     <div class="result-board">
         <div style="font-size: 16px; font-weight: bold; margin-bottom: 12px;">結算報告</div>
         <div class="result-item">
@@ -119,7 +126,7 @@
 </div>
 
 <script>
-    // 你的 Firebase 金鑰設定
+    // Firebase 金鑰設定
     const firebaseConfig = {
         apiKey: "AIzaSyCdKBfHHvqxHP-t-v1HYGli3zj9mc2-vac",
         authDomain: "lazycalculatorforlazypeople.firebaseapp.com",
@@ -134,25 +141,30 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    // 支援以 URL 參數建立不同房間，例如：yourdomain.com/?room=tokyo2026
     const urlParams = new URLSearchParams(window.location.search);
     const roomId = urlParams.get('room') || 'default_room';
     const roomRef = db.ref('trips/' + roomId);
 
     let isUpdatingFromCloud = false;
     let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa"];
+    let myChart = null;
 
-    // 監聽雲端資料變更 (實時同步 Core)
+    // 監聽雲端資料變更
     roomRef.on('value', (snapshot) => {
         const data = snapshot.val();
         const statusEl = document.getElementById('sync-status');
         statusEl.textContent = `🟢 已連線實時房間：${roomId}`;
         statusEl.className = 'sync-status sync-online';
 
-        if (data) {
-            isUpdatingFromCloud = true;
-            renderCloudData(data);
-            isUpdatingFromCloud = false;
+        if (data && !isUpdatingFromCloud) {
+            // 防跳游標機制：只有當沒有在焦點輸入框時才完全重繪
+            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
+                isUpdatingFromCloud = true;
+                renderCloudData(data);
+                isUpdatingFromCloud = false;
+            } else {
+                calculateBudget();
+            }
         }
     });
 
@@ -262,8 +274,8 @@
                         <option value="Others">其他</option>
                     </select>
                 </div>
-                <div><label>描述</label><input type="text" class="exp-desc" value="${savedData ? savedData.desc : ''}" oninput="pushDataToCloud()"></div>
-                <div><label>金額</label><input type="number" class="exp-amount" value="${savedData ? savedData.amount : ''}" oninput="pushDataToCloud()"></div>
+                <div><label>描述</label><input type="text" class="exp-desc" value="${savedData ? savedData.desc : ''}" onchange="pushDataToCloud()"></div>
+                <div><label>金額</label><input type="number" class="exp-amount" value="${savedData ? savedData.amount : ''}" onchange="pushDataToCloud()"></div>
                 <div><label>誰付的</label><select class="exp-payer" onchange="pushDataToCloud()"></select></div>
             </div>
             <div>
@@ -299,15 +311,19 @@
 
         let total = 0;
         let paidMap = {}, owedMap = {};
+        let categoryMap = { "Meals": 0, "Transportation": 0, "Lodging": 0, "Entertainment": 0, "Others": 0 };
+
         currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
 
         document.querySelectorAll('.expense-item').forEach(item => {
             const amt = parseFloat(item.querySelector('.exp-amount').value) || 0;
             const payer = item.querySelector('.exp-payer').value;
+            const cat = item.querySelector('.exp-category').value;
             const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
 
             if (amt > 0) {
                 total += amt;
+                if (categoryMap[cat] !== undefined) categoryMap[cat] += amt;
                 if (paidMap[payer] !== undefined) paidMap[payer] += amt;
                 if (shares.length > 0) {
                     const shareAmt = amt / shares.length;
@@ -318,6 +334,7 @@
 
         document.getElementById('res-total').textContent = total.toFixed(2);
 
+        // 結算明細
         const indReport = document.getElementById('individual-report');
         indReport.innerHTML = '';
         currentMembers.forEach(m => {
@@ -327,6 +344,7 @@
             indReport.innerHTML += `<div class="settle-row"><span>${m} (已付 ${curr}${paidMap[m].toFixed(2)})</span>${tag}</div>`;
         });
 
+        // 轉帳指引
         const settleReport = document.getElementById('settlement-report');
         settleReport.innerHTML = '';
         let debtors = [], creditors = [];
@@ -344,6 +362,72 @@
             if (Math.abs(debtors[i].balance) < 0.01) i++;
             if (Math.abs(creditors[j].balance) < 0.01) j++;
         }
+
+        // 更新 Chart.js 圖表
+        updateChart(categoryMap);
+    }
+
+    function updateChart(categoryData) {
+        const ctx = document.getElementById('categoryChart').getContext('2d');
+        const labels = ["餐飲", "交通", "住宿", "娛樂", "其他"];
+        const dataValues = [
+            categoryData["Meals"],
+            categoryData["Transportation"],
+            categoryData["Lodging"],
+            categoryData["Entertainment"],
+            categoryData["Others"]
+        ];
+
+        if (myChart) {
+            myChart.data.datasets[0].data = dataValues;
+            myChart.update();
+        } else {
+            myChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: dataValues,
+                        backgroundColor: ['#ff6384', '#36a2eb', '#cc65fe', '#ffce56', '#a0aec0']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        title: { display: true, text: '開銷分類比例' }
+                    }
+                }
+            });
+        }
+    }
+
+    // 匯出 Excel (CSV) 功能
+    function exportToCSV() {
+        let csvContent = "\uFEFF"; // 加入 UTF-8 BOM，防止 Excel 開啟亂碼
+        csvContent += "日期,分類,描述,金額,付款人,參與分攤人\n";
+
+        document.querySelectorAll('.expense-item').forEach(item => {
+            const date = item.querySelector('.exp-date').value || '';
+            const category = item.querySelector('.exp-category').value || '';
+            const desc = `"${(item.querySelector('.exp-desc').value || '').replace(/"/g, '""')}"`;
+            const amount = item.querySelector('.exp-amount').value || '0';
+            const payer = item.querySelector('.exp-payer').value || '';
+            const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value).join('; ');
+
+            csvContent += `${date},${category},${desc},${amount},${payer},"${shares}"\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        const dest = document.getElementById('destination').value || 'travel';
+        
+        link.setAttribute("href", url);
+        link.setAttribute("download", `${dest}_開銷明細.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 </script>
 </body>
