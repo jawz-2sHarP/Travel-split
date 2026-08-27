@@ -152,7 +152,6 @@
     let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa"];
     let myChart = null;
 
-    // 監聽雲端資料變更
     roomRef.on('value', (snapshot) => {
         const data = snapshot.val();
         const statusEl = document.getElementById('sync-status');
@@ -270,11 +269,11 @@
                 <div><label>日期</label><input type="date" class="exp-date" value="${savedData ? savedData.date : ''}" onchange="pushDataToCloud()"></div>
                 <div><label>分類</label>
                     <select class="exp-category" onchange="pushDataToCloud()">
-                        <option value="Meals">餐飲</option>
-                        <option value="Transportation">交通</option>
-                        <option value="Lodging">住宿</option>
-                        <option value="Entertainment">娛樂</option>
-                        <option value="Others">其他</option>
+                        <option value="Transportation">Transportation</option>
+                        <option value="Lodging">Lodging</option>
+                        <option value="Meals">Meals</option>
+                        <option value="Entertainment">Entertainment</option>
+                        <option value="Others">Others</option>
                     </select>
                 </div>
                 <div><label>描述</label><input type="text" class="exp-desc" value="${savedData ? savedData.desc : ''}" onchange="pushDataToCloud()"></div>
@@ -337,7 +336,6 @@
 
         document.getElementById('res-total').textContent = total.toFixed(2);
 
-        // 每人總花費 (個人消費金額)
         const personTotalReport = document.getElementById('person-total-report');
         personTotalReport.innerHTML = '';
         currentMembers.forEach(m => {
@@ -348,7 +346,6 @@
                 </div>`;
         });
 
-        // 結算明細 (應收/應付)
         const indReport = document.getElementById('individual-report');
         indReport.innerHTML = '';
         currentMembers.forEach(m => {
@@ -358,7 +355,6 @@
             indReport.innerHTML += `<div class="settle-row"><span>${m}</span>${tag}</div>`;
         });
 
-        // 轉帳指引
         const settleReport = document.getElementById('settlement-report');
         settleReport.innerHTML = '';
         let debtors = [], creditors = [];
@@ -415,29 +411,30 @@
         }
     }
 
-    // 匯出 Excel (CSV) - 根據截圖模板樣式 (橫向分類 + Total + 底欄 Sum) + 人名 X 軸統計表
+    // 重新設計的 CSV 導出邏輯
     function exportToCSV() {
-        let csvContent = "\uFEFF"; // UTF-8 BOM 防止亂碼
+        let csvContent = "\uFEFF"; // BOM 控制字元防止 Excel 開啟中文亂碼
 
-        // 1. 根據截圖模板格式匯出明細表
+        // 1. 圖片標準模板標題
         csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL\n";
 
         let totalTrans = 0, totalLodging = 0, totalMeals = 0, totalEnter = 0, totalOthers = 0, grandTotal = 0;
         let paidMap = {}, owedMap = {};
         currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
 
+        // 逐筆讀取 DOM 上的資料（確保抓到最新選擇的 category）
         document.querySelectorAll('.expense-item').forEach(item => {
             const date = item.querySelector('.exp-date').value || '';
             const desc = `"${(item.querySelector('.exp-desc').value || '').replace(/"/g, '""')}"`;
             const amountVal = parseFloat(item.querySelector('.exp-amount').value) || 0;
             const payer = item.querySelector('.exp-payer').value || '';
-            const category = item.querySelector('.exp-category').value || 'Others';
+            const categorySelect = item.querySelector('.exp-category');
+            const category = categorySelect ? categorySelect.value : 'Others';
             const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
 
             let trans = 0, lodging = 0, meals = 0, enter = 0, others = 0;
 
             if (amountVal > 0) {
-                // 依據分類填入相應的欄位
                 if (category === 'Transportation') { trans = amountVal; totalTrans += amountVal; }
                 else if (category === 'Lodging') { lodging = amountVal; totalLodging += amountVal; }
                 else if (category === 'Meals') { meals = amountVal; totalMeals += amountVal; }
@@ -463,16 +460,16 @@
             csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal}\n`;
         });
 
-        // 補上底部的 Total 行 (如圖片所示)
+        // 圖片底部的 Total 總計列
         csvContent += `Total,,,$${totalTrans.toFixed(2)},$${totalLodging.toFixed(2)},$${totalMeals.toFixed(2)},$${totalEnter.toFixed(2)},$${totalOthers.toFixed(2)},$${grandTotal.toFixed(2)}\n\n`;
 
-        // 2. 以人名為 X 軸（直欄標題）的個人統計表
-        csvContent += "=== 成員消費與結算統計表 (X軸: 人名) ===\n";
+        // 2. 以人名為 X 軸（直欄 Header）的結算總覽表
+        csvContent += "=== 成員個人消費結算表 (X軸: 人名) ===\n";
         csvContent += "統計項目," + currentMembers.join(",") + "\n";
 
         let rowPaid = "實際代墊金額(Paid)";
         let rowOwed = "個人應付總額(Expense)";
-        let rowNet = "最終應收/應付(Net Balance)";
+        let rowNet = "最終應收/應付(Net)";
 
         currentMembers.forEach(m => {
             const paid = paidMap[m] || 0;
@@ -488,14 +485,14 @@
         csvContent += rowOwed + "\n";
         csvContent += rowNet + "\n";
 
-        // 下載 CSV 檔案
+        // 下載 CSV 檔
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
         const dest = document.getElementById('destination').value || 'travel';
         
         link.setAttribute("href", url);
-        link.setAttribute("download", `${dest}_開銷明細.csv`);
+        link.setAttribute("download", `${dest}_記賬模板.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
