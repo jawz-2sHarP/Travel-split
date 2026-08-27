@@ -152,6 +152,11 @@
     let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa"];
     let myChart = null;
 
+    // 取得今天日期的 YYYY-MM-DD 格式
+    function getTodayString() {
+        return new Date().toISOString().split('T')[0];
+    }
+
     roomRef.on('value', (snapshot) => {
         const data = snapshot.val();
         const statusEl = document.getElementById('sync-status');
@@ -210,8 +215,8 @@
 
         if (!isEditing) {
             document.getElementById('destination').value = data.destination || '';
-            document.getElementById('trip-start-date').value = data.startDate || '';
-            document.getElementById('trip-end-date').value = data.endDate || '';
+            document.getElementById('trip-start-date').value = data.startDate || getTodayString();
+            document.getElementById('trip-end-date').value = data.endDate || getTodayString();
             document.getElementById('currency').value = data.currency || 'JPY ';
             document.getElementById('member-names').value = data.members || 'Jay, Cathy, Agnes, Louisa';
 
@@ -230,8 +235,7 @@
     function addNewDayBlock() {
         const container = document.getElementById('days-container');
         const dayCount = container.querySelectorAll('.day-block').length + 1;
-        const today = new Date().toISOString().split('T')[0];
-        renderDayBlock({ dayNum: dayCount, date: today, expenses: [] });
+        renderDayBlock({ dayNum: dayCount, date: getTodayString(), expenses: [] });
         pushDataToCloud();
     }
 
@@ -239,10 +243,14 @@
         const container = document.getElementById('days-container');
         const dayBlock = document.createElement('div');
         dayBlock.className = 'day-block';
+        
+        // 預設日期帶入今天
+        const blockDate = dayData.date || getTodayString();
+
         dayBlock.innerHTML = `
             <div class="day-header">
                 <div class="day-title">Day ${dayData.dayNum}</div>
-                <input type="date" class="day-date-picker" value="${dayData.date}" onchange="pushDataToCloud()">
+                <input type="date" class="day-date-picker" value="${blockDate}" onchange="pushDataToCloud()">
             </div>
             <div class="day-expenses-list"></div>
             <button class="btn" style="background-color:#4a5568; font-size:12px; margin-top:5px;" onclick="addExpenseRow(this)">新增明細</button>
@@ -259,6 +267,9 @@
         let expList = targetEl.classList.contains('day-expenses-list') ? targetEl : targetEl.closest('.day-block').querySelector('.day-expenses-list');
         const rowId = savedData ? savedData.id : ('row_' + Date.now());
 
+        // 明細項目的日期預設為「今天日期」
+        const defaultDate = (savedData && savedData.date) ? savedData.date : getTodayString();
+
         const itemDiv = document.createElement('div');
         itemDiv.className = 'expense-item';
         itemDiv.id = rowId;
@@ -266,7 +277,7 @@
         itemDiv.innerHTML = `
             <button class="btn-delete" onclick="this.closest('.expense-item').remove(); pushDataToCloud();">刪除</button>
             <div class="expense-inputs">
-                <div><label>日期</label><input type="date" class="exp-date" value="${savedData ? savedData.date : ''}" onchange="pushDataToCloud()"></div>
+                <div><label>日期</label><input type="date" class="exp-date" value="${defaultDate}" onchange="pushDataToCloud()"></div>
                 <div><label>分類</label>
                     <select class="exp-category" onchange="pushDataToCloud()">
                         <option value="Transportation">Transportation</option>
@@ -411,20 +422,17 @@
         }
     }
 
-    // 重新設計的 CSV 導出邏輯
     function exportToCSV() {
-        let csvContent = "\uFEFF"; // BOM 控制字元防止 Excel 開啟中文亂碼
+        let csvContent = "\uFEFF";
 
-        // 1. 圖片標準模板標題
         csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL\n";
 
         let totalTrans = 0, totalLodging = 0, totalMeals = 0, totalEnter = 0, totalOthers = 0, grandTotal = 0;
         let paidMap = {}, owedMap = {};
         currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
 
-        // 逐筆讀取 DOM 上的資料（確保抓到最新選擇的 category）
         document.querySelectorAll('.expense-item').forEach(item => {
-            const date = item.querySelector('.exp-date').value || '';
+            const date = item.querySelector('.exp-date').value || getTodayString();
             const desc = `"${(item.querySelector('.exp-desc').value || '').replace(/"/g, '""')}"`;
             const amountVal = parseFloat(item.querySelector('.exp-amount').value) || 0;
             const payer = item.querySelector('.exp-payer').value || '';
@@ -460,10 +468,8 @@
             csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal}\n`;
         });
 
-        // 圖片底部的 Total 總計列
         csvContent += `Total,,,$${totalTrans.toFixed(2)},$${totalLodging.toFixed(2)},$${totalMeals.toFixed(2)},$${totalEnter.toFixed(2)},$${totalOthers.toFixed(2)},$${grandTotal.toFixed(2)}\n\n`;
 
-        // 2. 以人名為 X 軸（直欄 Header）的結算總覽表
         csvContent += "=== 成員個人消費結算表 (X軸: 人名) ===\n";
         csvContent += "統計項目," + currentMembers.join(",") + "\n";
 
@@ -485,7 +491,6 @@
         csvContent += rowOwed + "\n";
         csvContent += rowNet + "\n";
 
-        // 下載 CSV 檔
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         const url = URL.createObjectURL(blob);
