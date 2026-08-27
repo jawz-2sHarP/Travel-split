@@ -152,9 +152,16 @@
     let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa"];
     let myChart = null;
 
-    // 取得今天日期的 YYYY-MM-DD 格式
     function getTodayString() {
         return new Date().toISOString().split('T')[0];
+    }
+
+    // 計算特定日期增加幾天的字串
+    function addDaysToString(dateStr, days) {
+        if (!dateStr) return getTodayString();
+        const d = new Date(dateStr);
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
     }
 
     roomRef.on('value', (snapshot) => {
@@ -232,10 +239,22 @@
         calculateBudget();
     }
 
+    // 新增 Day 區塊時：日期承接前一天 + 1 天
     function addNewDayBlock() {
         const container = document.getElementById('days-container');
-        const dayCount = container.querySelectorAll('.day-block').length + 1;
-        renderDayBlock({ dayNum: dayCount, date: getTodayString(), expenses: [] });
+        const existingBlocks = container.querySelectorAll('.day-block');
+        const dayCount = existingBlocks.length + 1;
+
+        let nextDate = '';
+        if (existingBlocks.length > 0) {
+            const lastDayDate = existingBlocks[existingBlocks.length - 1].querySelector('.day-date-picker').value;
+            nextDate = addDaysToString(lastDayDate, 1);
+        } else {
+            const startDate = document.getElementById('trip-start-date').value;
+            nextDate = startDate || getTodayString();
+        }
+
+        renderDayBlock({ dayNum: dayCount, date: nextDate, expenses: [] });
         pushDataToCloud();
     }
 
@@ -244,13 +263,12 @@
         const dayBlock = document.createElement('div');
         dayBlock.className = 'day-block';
         
-        // 預設日期帶入今天
         const blockDate = dayData.date || getTodayString();
 
         dayBlock.innerHTML = `
             <div class="day-header">
                 <div class="day-title">Day ${dayData.dayNum}</div>
-                <input type="date" class="day-date-picker" value="${blockDate}" onchange="pushDataToCloud()">
+                <input type="date" class="day-date-picker" value="${blockDate}" onchange="updateDayExpensesDate(this); pushDataToCloud();">
             </div>
             <div class="day-expenses-list"></div>
             <button class="btn" style="background-color:#4a5568; font-size:12px; margin-top:5px;" onclick="addExpenseRow(this)">新增明細</button>
@@ -263,12 +281,23 @@
         }
     }
 
+    // 當 Day 頂部日期變更時，自動更新底下尚未手動改過的明細日期
+    function updateDayExpensesDate(datePickerEl) {
+        const dayBlock = datePickerEl.closest('.day-block');
+        const newDate = datePickerEl.value;
+        dayBlock.querySelectorAll('.exp-date').forEach(input => {
+            input.value = newDate;
+        });
+    }
+
     function addExpenseRow(targetEl, savedData = null) {
         let expList = targetEl.classList.contains('day-expenses-list') ? targetEl : targetEl.closest('.day-block').querySelector('.day-expenses-list');
+        const dayBlock = expList.closest('.day-block');
+        
+        // 抓取該 Day 頂部的日期作為預設明細日期
+        const dayHeaderDate = dayBlock ? dayBlock.querySelector('.day-date-picker').value : getTodayString();
         const rowId = savedData ? savedData.id : ('row_' + Date.now());
-
-        // 明細項目的日期預設為「今天日期」
-        const defaultDate = (savedData && savedData.date) ? savedData.date : getTodayString();
+        const defaultDate = (savedData && savedData.date) ? savedData.date : dayHeaderDate;
 
         const itemDiv = document.createElement('div');
         itemDiv.className = 'expense-item';
