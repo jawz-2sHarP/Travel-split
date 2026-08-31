@@ -156,7 +156,6 @@
         return new Date().toISOString().split('T')[0];
     }
 
-    // 計算特定日期增加幾天的字串
     function addDaysToString(dateStr, days) {
         if (!dateStr) return getTodayString();
         const d = new Date(dateStr);
@@ -239,7 +238,6 @@
         calculateBudget();
     }
 
-    // 新增 Day 區塊時：日期承接前一天 + 1 天
     function addNewDayBlock() {
         const container = document.getElementById('days-container');
         const existingBlocks = container.querySelectorAll('.day-block');
@@ -281,7 +279,6 @@
         }
     }
 
-    // 當 Day 頂部日期變更時，自動更新底下尚未手動改過的明細日期
     function updateDayExpensesDate(datePickerEl) {
         const dayBlock = datePickerEl.closest('.day-block');
         const newDate = datePickerEl.value;
@@ -294,7 +291,6 @@
         let expList = targetEl.classList.contains('day-expenses-list') ? targetEl : targetEl.closest('.day-block').querySelector('.day-expenses-list');
         const dayBlock = expList.closest('.day-block');
         
-        // 抓取該 Day 頂部的日期作為預設明細日期
         const dayHeaderDate = dayBlock ? dayBlock.querySelector('.day-date-picker').value : getTodayString();
         const rowId = savedData ? savedData.id : ('row_' + Date.now());
         const defaultDate = (savedData && savedData.date) ? savedData.date : dayHeaderDate;
@@ -451,10 +447,12 @@
         }
     }
 
+    // 匯出 CSV，加入分攤成員與每人平均金額
     function exportToCSV() {
         let csvContent = "\uFEFF";
 
-        csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL\n";
+        // 標題增加 Split Between 與 Average Amount Per Person
+        csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL,Split Between,Average Amount Per Person\n";
 
         let totalTrans = 0, totalLodging = 0, totalMeals = 0, totalEnter = 0, totalOthers = 0, grandTotal = 0;
         let paidMap = {}, owedMap = {};
@@ -470,6 +468,8 @@
             const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
 
             let trans = 0, lodging = 0, meals = 0, enter = 0, others = 0;
+            let avgAmtStr = "$0.00";
+            let sharesStr = `"${shares.join(" | ")}"`;
 
             if (amountVal > 0) {
                 if (category === 'Transportation') { trans = amountVal; totalTrans += amountVal; }
@@ -483,6 +483,7 @@
                 if (paidMap[payer] !== undefined) paidMap[payer] += amountVal;
                 if (shares.length > 0) {
                     const shareAmt = amountVal / shares.length;
+                    avgAmtStr = `$${shareAmt.toFixed(2)}`;
                     shares.forEach(s => { if (owedMap[s] !== undefined) owedMap[s] += shareAmt; });
                 }
             }
@@ -494,10 +495,10 @@
             const strOthers = others ? `$${others.toFixed(2)}` : '';
             const strTotal = `$${amountVal.toFixed(2)}`;
 
-            csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal}\n`;
+            csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal},${sharesStr},${avgAmtStr}\n`;
         });
 
-        csvContent += `Total,,,$${totalTrans.toFixed(2)},$${totalLodging.toFixed(2)},$${totalMeals.toFixed(2)},$${totalEnter.toFixed(2)},$${totalOthers.toFixed(2)},$${grandTotal.toFixed(2)}\n\n`;
+        csvContent += `Total,,,$${totalTrans.toFixed(2)},$${totalLodging.toFixed(2)},$${totalMeals.toFixed(2)},$${totalEnter.toFixed(2)},$${totalOthers.toFixed(2)},$${grandTotal.toFixed(2)},,\n\n`;
 
         csvContent += "=== 成員個人消費結算表 (X軸: 人名) ===\n";
         csvContent += "統計項目," + currentMembers.join(",") + "\n";
@@ -526,7 +527,7 @@
         const dest = document.getElementById('destination').value || 'travel';
         
         link.setAttribute("href", url);
-        link.setAttribute("download", `${dest}_記賬模板.csv`);
+        link.setAttribute("download", `${dest}_記帳模板.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
