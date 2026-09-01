@@ -64,7 +64,6 @@
         
         .chart-card { background: white; padding: 15px; border-radius: 8px; text-align: center; margin-top: 15px; max-width: 400px; margin: 15px auto 0 auto; }
 
-        /* 一鍵置底懸浮按鈕 */
         .scroll-to-bottom-btn {
             position: fixed;
             bottom: 25px;
@@ -191,7 +190,6 @@
         return d.toISOString().split('T')[0];
     }
 
-    // 一鍵到底功能
     function scrollToBottom() {
         document.getElementById('result-board-section').scrollIntoView({ behavior: 'smooth' });
     }
@@ -315,7 +313,6 @@
         }
     }
 
-    // 刪除整天並重新編號
     function deleteDayBlock(btn) {
         if (confirm("確定要刪除這整天的所有資料嗎？")) {
             btn.closest('.day-block').remove();
@@ -324,7 +321,6 @@
         }
     }
 
-    // 刪除後自動修正 Day 1, Day 2, Day 3 標題編號
     function reindexDayBlocks() {
         document.querySelectorAll('.day-block').forEach((block, idx) => {
             block.querySelector('.day-title').textContent = `Day ${idx + 1}`;
@@ -499,25 +495,26 @@
         }
     }
 
-    // 依天數 (Day) 拆分做表，並在最底顯示全旅程總數
+    // 匯出 CSV：按天做表、計算每人每天應付額、底端顯示全旅程總數與每人總應付額
     function exportToCSV() {
         let csvContent = "\uFEFF";
 
         let grandTrans = 0, grandLodging = 0, grandMeals = 0, grandEnter = 0, grandOthers = 0, grandTotal = 0;
-        let paidMap = {}, owedMap = {};
-        currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
+        let globalPaidMap = {}, globalOwedMap = {};
+        currentMembers.forEach(m => { globalPaidMap[m] = 0; globalOwedMap[m] = 0; });
 
         const dayBlocks = document.querySelectorAll('.day-block');
 
-        dayBlocks.forEach((dayBlock, idx) => {
+        dayBlocks.forEach((dayBlock) => {
             const dayTitle = dayBlock.querySelector('.day-title').textContent;
             const dayDate = dayBlock.querySelector('.day-date-picker').value || '';
 
-            // 表頭 Header
             csvContent += `=== ${dayTitle} (${dayDate}) ===\n`;
             csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL,Split Between,Average Amount Per Person\n";
 
             let dayTrans = 0, dayLodging = 0, dayMeals = 0, dayEnter = 0, dayOthers = 0, dayTotal = 0;
+            let dayOwedMap = {};
+            currentMembers.forEach(m => dayOwedMap[m] = 0);
 
             const items = dayBlock.querySelectorAll('.expense-item');
             items.forEach(item => {
@@ -542,11 +539,14 @@
 
                     dayTotal += amountVal;
 
-                    if (paidMap[payer] !== undefined) paidMap[payer] += amountVal;
+                    if (globalPaidMap[payer] !== undefined) globalPaidMap[payer] += amountVal;
                     if (shares.length > 0) {
                         const shareAmt = amountVal / shares.length;
                         avgAmtStr = `$${shareAmt.toFixed(2)}`;
-                        shares.forEach(s => { if (owedMap[s] !== undefined) owedMap[s] += shareAmt; });
+                        shares.forEach(s => { 
+                            if (dayOwedMap[s] !== undefined) dayOwedMap[s] += shareAmt; 
+                            if (globalOwedMap[s] !== undefined) globalOwedMap[s] += shareAmt; 
+                        });
                     }
                 }
 
@@ -560,10 +560,16 @@
                 csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal},${sharesStr},${avgAmtStr}\n`;
             });
 
-            // 當日小計 (Subtotal)
-            csvContent += `${dayTitle} Subtotal,,,$${dayTrans.toFixed(2)},$${dayLodging.toFixed(2)},$${dayMeals.toFixed(2)},$${dayEnter.toFixed(2)},$${dayOthers.toFixed(2)},$${dayTotal.toFixed(2)},,\n\n`;
+            // 當日小計
+            csvContent += `${dayTitle} 當日小計,,,$${dayTrans.toFixed(2)},$${dayLodging.toFixed(2)},$${dayMeals.toFixed(2)},$${dayEnter.toFixed(2)},$${dayOthers.toFixed(2)},$${dayTotal.toFixed(2)},,\n`;
 
-            // 累加到全旅程總計
+            // 每人「當天」應付總數 (Daily Expense Per Person)
+            csvContent += `${dayTitle} 每人當天應付額,`;
+            currentMembers.forEach(m => {
+                csvContent += `${m}: $${dayOwedMap[m].toFixed(2)} | `;
+            });
+            csvContent += "\n\n";
+
             grandTrans += dayTrans;
             grandLodging += dayLodging;
             grandMeals += dayMeals;
@@ -578,7 +584,7 @@
         csvContent += "Transportation,Lodging,Meals,Entertainment,Others,TOTAL COST\n";
         csvContent += `$${grandTrans.toFixed(2)},$${grandLodging.toFixed(2)},$${grandMeals.toFixed(2)},$${grandEnter.toFixed(2)},$${grandOthers.toFixed(2)},$${grandTotal.toFixed(2)}\n\n`;
 
-        // 成員個人消費結算表
+        // 成員個人消費結算表 (含全旅程每人應付額、代墊額與最終清帳)
         csvContent += "=== 成員個人消費結算表 (X軸: 人名) ===\n";
         csvContent += "統計項目," + currentMembers.join(",") + "\n";
 
@@ -587,8 +593,8 @@
         let rowNet = "最終應收/應付(Net)";
 
         currentMembers.forEach(m => {
-            const paid = paidMap[m] || 0;
-            const owed = owedMap[m] || 0;
+            const paid = globalPaidMap[m] || 0;
+            const owed = globalOwedMap[m] || 0;
             const net = paid - owed;
 
             rowPaid += `,$${paid.toFixed(2)}`;
