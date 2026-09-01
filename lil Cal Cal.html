@@ -34,7 +34,7 @@
         input, select { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 14px; outline: none; }
         
         .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .day-block { background: #f8fafc; border: 2px dashed #cbd5e0; border-radius: 12px; padding: 15px; margin-bottom: 20px; }
+        .day-block { background: #f8fafc; border: 2px dashed #cbd5e0; border-radius: 12px; padding: 15px; margin-bottom: 20px; position: relative; }
         .day-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
         .day-title { font-size: 16px; font-weight: bold; color: #2b6cb0; }
         .expense-item { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px; margin-bottom: 12px; position: relative; }
@@ -52,6 +52,7 @@
         .btn-add-day { background-color: #319795; width: 100%; font-size: 15px; font-weight: bold; margin-bottom: 15px; }
         .btn-excel { background-color: #27ae60; padding: 6px 12px; font-size: 13px; }
         .btn-delete { background: none; color: var(--warning-color); border: none; position: absolute; top: 12px; right: 12px; cursor: pointer; font-weight: bold; }
+        .btn-delete-day { background-color: #e74c3c; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-left: 10px; }
 
         .result-board { background: #edf2f7; border-radius: 12px; padding: 20px; margin-top: 25px; }
         .result-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -62,6 +63,30 @@
         .tag-get { color: var(--secondary-color); font-weight: bold; }
         
         .chart-card { background: white; padding: 15px; border-radius: 8px; text-align: center; margin-top: 15px; max-width: 400px; margin: 15px auto 0 auto; }
+
+        /* 一鍵置底懸浮按鈕 */
+        .scroll-to-bottom-btn {
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            font-size: 20px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            transition: transform 0.2s;
+        }
+        .scroll-to-bottom-btn:hover {
+            transform: scale(1.1);
+        }
     </style>
 </head>
 <body>
@@ -106,7 +131,7 @@
     <div id="days-container"></div>
 
     <!-- 3. 結算報告 -->
-    <div class="result-board">
+    <div class="result-board" id="result-board-section">
         <div style="font-size: 16px; font-weight: bold; margin-bottom: 12px;">結算報告</div>
         <div class="result-item">
             <span>全團總花費：</span>
@@ -127,6 +152,9 @@
         </div>
     </div>
 </div>
+
+<!-- 一鍵到底懸浮按鈕 -->
+<button class="scroll-to-bottom-btn" onclick="scrollToBottom()" title="一鍵到底">↓</button>
 
 <script>
     // Firebase 金鑰設定
@@ -161,6 +189,11 @@
         const d = new Date(dateStr);
         d.setDate(d.getDate() + days);
         return d.toISOString().split('T')[0];
+    }
+
+    // 一鍵到底功能
+    function scrollToBottom() {
+        document.getElementById('result-board-section').scrollIntoView({ behavior: 'smooth' });
     }
 
     roomRef.on('value', (snapshot) => {
@@ -265,7 +298,10 @@
 
         dayBlock.innerHTML = `
             <div class="day-header">
-                <div class="day-title">Day ${dayData.dayNum}</div>
+                <div>
+                    <span class="day-title">Day ${dayData.dayNum}</span>
+                    <button class="btn-delete-day" onclick="deleteDayBlock(this)">刪除此天</button>
+                </div>
                 <input type="date" class="day-date-picker" value="${blockDate}" onchange="updateDayExpensesDate(this); pushDataToCloud();">
             </div>
             <div class="day-expenses-list"></div>
@@ -277,6 +313,22 @@
         if (dayData.expenses) {
             dayData.expenses.forEach(exp => addExpenseRow(expList, exp));
         }
+    }
+
+    // 刪除整天並重新編號
+    function deleteDayBlock(btn) {
+        if (confirm("確定要刪除這整天的所有資料嗎？")) {
+            btn.closest('.day-block').remove();
+            reindexDayBlocks();
+            pushDataToCloud();
+        }
+    }
+
+    // 刪除後自動修正 Day 1, Day 2, Day 3 標題編號
+    function reindexDayBlocks() {
+        document.querySelectorAll('.day-block').forEach((block, idx) => {
+            block.querySelector('.day-title').textContent = `Day ${idx + 1}`;
+        });
     }
 
     function updateDayExpensesDate(datePickerEl) {
@@ -447,59 +499,86 @@
         }
     }
 
-    // 匯出 CSV，加入分攤成員與每人平均金額
+    // 依天數 (Day) 拆分做表，並在最底顯示全旅程總數
     function exportToCSV() {
         let csvContent = "\uFEFF";
 
-        // 標題增加 Split Between 與 Average Amount Per Person
-        csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL,Split Between,Average Amount Per Person\n";
-
-        let totalTrans = 0, totalLodging = 0, totalMeals = 0, totalEnter = 0, totalOthers = 0, grandTotal = 0;
+        let grandTrans = 0, grandLodging = 0, grandMeals = 0, grandEnter = 0, grandOthers = 0, grandTotal = 0;
         let paidMap = {}, owedMap = {};
         currentMembers.forEach(m => { paidMap[m] = 0; owedMap[m] = 0; });
 
-        document.querySelectorAll('.expense-item').forEach(item => {
-            const date = item.querySelector('.exp-date').value || getTodayString();
-            const desc = `"${(item.querySelector('.exp-desc').value || '').replace(/"/g, '""')}"`;
-            const amountVal = parseFloat(item.querySelector('.exp-amount').value) || 0;
-            const payer = item.querySelector('.exp-payer').value || '';
-            const categorySelect = item.querySelector('.exp-category');
-            const category = categorySelect ? categorySelect.value : 'Others';
-            const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
+        const dayBlocks = document.querySelectorAll('.day-block');
 
-            let trans = 0, lodging = 0, meals = 0, enter = 0, others = 0;
-            let avgAmtStr = "$0.00";
-            let sharesStr = `"${shares.join(" | ")}"`;
+        dayBlocks.forEach((dayBlock, idx) => {
+            const dayTitle = dayBlock.querySelector('.day-title').textContent;
+            const dayDate = dayBlock.querySelector('.day-date-picker').value || '';
 
-            if (amountVal > 0) {
-                if (category === 'Transportation') { trans = amountVal; totalTrans += amountVal; }
-                else if (category === 'Lodging') { lodging = amountVal; totalLodging += amountVal; }
-                else if (category === 'Meals') { meals = amountVal; totalMeals += amountVal; }
-                else if (category === 'Entertainment') { enter = amountVal; totalEnter += amountVal; }
-                else { others = amountVal; totalOthers += amountVal; }
+            // 表頭 Header
+            csvContent += `=== ${dayTitle} (${dayDate}) ===\n`;
+            csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL,Split Between,Average Amount Per Person\n";
 
-                grandTotal += amountVal;
+            let dayTrans = 0, dayLodging = 0, dayMeals = 0, dayEnter = 0, dayOthers = 0, dayTotal = 0;
 
-                if (paidMap[payer] !== undefined) paidMap[payer] += amountVal;
-                if (shares.length > 0) {
-                    const shareAmt = amountVal / shares.length;
-                    avgAmtStr = `$${shareAmt.toFixed(2)}`;
-                    shares.forEach(s => { if (owedMap[s] !== undefined) owedMap[s] += shareAmt; });
+            const items = dayBlock.querySelectorAll('.expense-item');
+            items.forEach(item => {
+                const date = item.querySelector('.exp-date').value || dayDate;
+                const desc = `"${(item.querySelector('.exp-desc').value || '').replace(/"/g, '""')}"`;
+                const amountVal = parseFloat(item.querySelector('.exp-amount').value) || 0;
+                const payer = item.querySelector('.exp-payer').value || '';
+                const categorySelect = item.querySelector('.exp-category');
+                const category = categorySelect ? categorySelect.value : 'Others';
+                const shares = Array.from(item.querySelectorAll('.member-checkbox:checked')).map(cb => cb.value);
+
+                let trans = 0, lodging = 0, meals = 0, enter = 0, others = 0;
+                let avgAmtStr = "$0.00";
+                let sharesStr = `"${shares.join(" | ")}"`;
+
+                if (amountVal > 0) {
+                    if (category === 'Transportation') { trans = amountVal; dayTrans += amountVal; }
+                    else if (category === 'Lodging') { lodging = amountVal; dayLodging += amountVal; }
+                    else if (category === 'Meals') { meals = amountVal; dayMeals += amountVal; }
+                    else if (category === 'Entertainment') { enter = amountVal; dayEnter += amountVal; }
+                    else { others = amountVal; dayOthers += amountVal; }
+
+                    dayTotal += amountVal;
+
+                    if (paidMap[payer] !== undefined) paidMap[payer] += amountVal;
+                    if (shares.length > 0) {
+                        const shareAmt = amountVal / shares.length;
+                        avgAmtStr = `$${shareAmt.toFixed(2)}`;
+                        shares.forEach(s => { if (owedMap[s] !== undefined) owedMap[s] += shareAmt; });
+                    }
                 }
-            }
 
-            const strTrans = trans ? `$${trans.toFixed(2)}` : '';
-            const strLodging = lodging ? `$${lodging.toFixed(2)}` : '';
-            const strMeals = meals ? `$${meals.toFixed(2)}` : '';
-            const strEnter = enter ? `$${enter.toFixed(2)}` : '';
-            const strOthers = others ? `$${others.toFixed(2)}` : '';
-            const strTotal = `$${amountVal.toFixed(2)}`;
+                const strTrans = trans ? `$${trans.toFixed(2)}` : '';
+                const strLodging = lodging ? `$${lodging.toFixed(2)}` : '';
+                const strMeals = meals ? `$${meals.toFixed(2)}` : '';
+                const strEnter = enter ? `$${enter.toFixed(2)}` : '';
+                const strOthers = others ? `$${others.toFixed(2)}` : '';
+                const strTotal = `$${amountVal.toFixed(2)}`;
 
-            csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal},${sharesStr},${avgAmtStr}\n`;
+                csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal},${sharesStr},${avgAmtStr}\n`;
+            });
+
+            // 當日小計 (Subtotal)
+            csvContent += `${dayTitle} Subtotal,,,$${dayTrans.toFixed(2)},$${dayLodging.toFixed(2)},$${dayMeals.toFixed(2)},$${dayEnter.toFixed(2)},$${dayOthers.toFixed(2)},$${dayTotal.toFixed(2)},,\n\n`;
+
+            // 累加到全旅程總計
+            grandTrans += dayTrans;
+            grandLodging += dayLodging;
+            grandMeals += dayMeals;
+            grandEnter += dayEnter;
+            grandOthers += dayOthers;
+            grandTotal += dayTotal;
         });
 
-        csvContent += `Total,,,$${totalTrans.toFixed(2)},$${totalLodging.toFixed(2)},$${totalMeals.toFixed(2)},$${totalEnter.toFixed(2)},$${totalOthers.toFixed(2)},$${grandTotal.toFixed(2)},,\n\n`;
+        // 頁面最底部：全旅程總計 (Grand Total)
+        csvContent += "=========================================\n";
+        csvContent += "=== 全旅程花費總計 (GRAND TOTAL) ===\n";
+        csvContent += "Transportation,Lodging,Meals,Entertainment,Others,TOTAL COST\n";
+        csvContent += `$${grandTrans.toFixed(2)},$${grandLodging.toFixed(2)},$${grandMeals.toFixed(2)},$${grandEnter.toFixed(2)},$${grandOthers.toFixed(2)},$${grandTotal.toFixed(2)}\n\n`;
 
+        // 成員個人消費結算表
         csvContent += "=== 成員個人消費結算表 (X軸: 人名) ===\n";
         csvContent += "統計項目," + currentMembers.join(",") + "\n";
 
@@ -527,7 +606,7 @@
         const dest = document.getElementById('destination').value || 'travel';
         
         link.setAttribute("href", url);
-        link.setAttribute("download", `${dest}_記帳模板.csv`);
+        link.setAttribute("download", `${dest}_按天分類記帳模板.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
