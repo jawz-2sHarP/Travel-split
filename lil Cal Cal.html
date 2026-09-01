@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>旅行自動分賬計算器 (實時同步版)</title>
+
     <!-- 引入 Chart.js 與 Firebase SDK -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -21,7 +22,7 @@
 
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body { background-color: var(--bg-color); color: var(--text-color); padding: 20px 10px; display: flex; justify-content: center; }
-        .container { width: 100%; max-width: 800px; background: var(--card-bg); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); }
+        .container { width: 100%; max-width: 850px; background: var(--card-bg); padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); }
         h1 { text-align: center; margin-bottom: 20px; color: #2c3e50; font-size: 24px; }
         
         .sync-status { text-align: center; font-size: 13px; font-weight: bold; padding: 6px; border-radius: 6px; margin-bottom: 15px; }
@@ -50,7 +51,7 @@
 
         .btn { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 14px; }
         .btn-add-day { background-color: #319795; width: 100%; font-size: 15px; font-weight: bold; margin-bottom: 15px; }
-        .btn-excel { background-color: #27ae60; padding: 6px 12px; font-size: 13px; }
+        .btn-excel { background-color: #27ae60; padding: 8px 14px; font-size: 13px; font-weight: bold; }
         .btn-delete { background: none; color: var(--warning-color); border: none; position: absolute; top: 12px; right: 12px; cursor: pointer; font-weight: bold; }
         .btn-delete-day { background-color: #e74c3c; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-left: 10px; }
 
@@ -118,7 +119,7 @@
 
     <div class="form-group">
         <label>成員名單 (用逗號隔開)</label>
-        <input type="text" id="member-names" value="Jay, Cathy, Agnes, Louisa" onchange="pushDataToCloud()">
+        <input type="text" id="member-names" value="Jay, Cathy, Agnes, Louisa, Grace" onchange="pushDataToCloud()">
     </div>
 
     <!-- 2. 費用細項 -->
@@ -176,7 +177,7 @@
     const roomRef = db.ref('trips/' + roomId);
 
     let isUpdatingFromCloud = false;
-    let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa"];
+    let currentMembers = ["Jay", "Cathy", "Agnes", "Louisa", "Grace"];
     let myChart = null;
 
     function getTodayString() {
@@ -255,7 +256,7 @@
             document.getElementById('trip-start-date').value = data.startDate || getTodayString();
             document.getElementById('trip-end-date').value = data.endDate || getTodayString();
             document.getElementById('currency').value = data.currency || 'JPY ';
-            document.getElementById('member-names').value = data.members || 'Jay, Cathy, Agnes, Louisa';
+            document.getElementById('member-names').value = data.members || 'Jay, Cathy, Agnes, Louisa, Grace';
 
             currentMembers = (data.members || '').split(/[,，]/).map(n => n.trim()).filter(n => n !== "");
 
@@ -495,24 +496,29 @@
         }
     }
 
-    // 匯出 CSV：每天 Subtotal 顯示每人當天應付金額，最底部顯示全旅程每人應付總額
+    // 匯出 CSV：包含專屬每人 X 軸欄位，並在 Subtotal 當直行算每人每天應付額
     function exportToCSV() {
         let csvContent = "\uFEFF";
 
-        let grandTotal = 0;
+        let grandTrans = 0, grandLodging = 0, grandMeals = 0, grandEnter = 0, grandOthers = 0, grandTotal = 0;
         let globalPaidMap = {}, globalOwedMap = {};
         currentMembers.forEach(m => { globalPaidMap[m] = 0; globalOwedMap[m] = 0; });
 
         const dayBlocks = document.querySelectorAll('.day-block');
+
+        // 表頭：基礎欄位 + 右邊延伸每人的「應付: 人名」專屬欄
+        const baseHeaders = ["Date", "Description", "Payer", "Transportation", "Lodging", "Meals", "Entertainment", "Others", "TOTAL", "Split Between", "Average Amount Per Person"];
+        const memberHeaders = currentMembers.map(m => `應付: ${m}`);
+        const fullHeaderStr = baseHeaders.concat(memberHeaders).join(",") + "\n";
 
         dayBlocks.forEach((dayBlock) => {
             const dayTitle = dayBlock.querySelector('.day-title').textContent;
             const dayDate = dayBlock.querySelector('.day-date-picker').value || '';
 
             csvContent += `=== ${dayTitle} (${dayDate}) ===\n`;
-            csvContent += "Date,Description,Payer,Transportation,Lodging,Meals,Entertainment,Others,TOTAL,Split Between,Average Amount Per Person\n";
+            csvContent += fullHeaderStr;
 
-            let dayTotal = 0;
+            let dayTrans = 0, dayLodging = 0, dayMeals = 0, dayEnter = 0, dayOthers = 0, dayTotal = 0;
             let dayOwedMap = {};
             currentMembers.forEach(m => dayOwedMap[m] = 0);
 
@@ -530,12 +536,16 @@
                 let avgAmtStr = "$0.00";
                 let sharesStr = `"${shares.join(" | ")}"`;
 
+                // 儲存每個人在這筆消費中應付多少
+                let itemMemberOwed = {};
+                currentMembers.forEach(m => itemMemberOwed[m] = 0);
+
                 if (amountVal > 0) {
-                    if (category === 'Transportation') trans = amountVal;
-                    else if (category === 'Lodging') lodging = amountVal;
-                    else if (category === 'Meals') meals = amountVal;
-                    else if (category === 'Entertainment') enter = amountVal;
-                    else others = amountVal;
+                    if (category === 'Transportation') { trans = amountVal; dayTrans += amountVal; }
+                    else if (category === 'Lodging') { lodging = amountVal; dayLodging += amountVal; }
+                    else if (category === 'Meals') { meals = amountVal; dayMeals += amountVal; }
+                    else if (category === 'Entertainment') { enter = amountVal; dayEnter += amountVal; }
+                    else { others = amountVal; dayOthers += amountVal; }
 
                     dayTotal += amountVal;
 
@@ -546,6 +556,7 @@
                         shares.forEach(s => { 
                             if (dayOwedMap[s] !== undefined) dayOwedMap[s] += shareAmt; 
                             if (globalOwedMap[s] !== undefined) globalOwedMap[s] += shareAmt; 
+                            itemMemberOwed[s] = shareAmt;
                         });
                     }
                 }
@@ -557,36 +568,39 @@
                 const strOthers = others ? `$${others.toFixed(2)}` : '';
                 const strTotal = `$${amountVal.toFixed(2)}`;
 
-                csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal},${sharesStr},${avgAmtStr}\n`;
+                // 組裝個人應付欄位的字串
+                const memberOwedCells = currentMembers.map(m => itemMemberOwed[m] > 0 ? `$${itemMemberOwed[m].toFixed(2)}` : '$0.00');
+
+                csvContent += `${date},${desc},${payer},${strTrans},${strLodging},${strMeals},${strEnter},${strOthers},${strTotal},${sharesStr},${avgAmtStr},${memberOwedCells.join(",")}\n`;
             });
 
-            // 當日小計 (Subtotal)：改為直接列出當天每人應付多少錢
-            let daySubtotalText = `${dayTitle} Subtotal (當天總開銷: $${dayTotal.toFixed(2)})`;
-            let dayPerPersonOwedText = currentMembers.map(m => `${m}: $${dayOwedMap[m].toFixed(2)}`).join(" | ");
-            csvContent += `"${daySubtotalText}",,,,,,,,"$${dayTotal.toFixed(2)}","${dayPerPersonOwedText}"\n\n`;
+            // 當日 Subtotal (包含左側類別小計，以及右側專屬欄位的「每人當天應付總額」)
+            const dayMemberSubtotals = currentMembers.map(m => `$${dayOwedMap[m].toFixed(2)}`);
+            csvContent += `${dayTitle} Subtotal,,,$${dayTrans.toFixed(2)},$${dayLodging.toFixed(2)},$${dayMeals.toFixed(2)},$${dayEnter.toFixed(2)},$${dayOthers.toFixed(2)},$${dayTotal.toFixed(2)},,${dayMemberSubtotals.join(",")}\n\n`;
 
+            grandTrans += dayTrans;
+            grandLodging += dayLodging;
+            grandMeals += dayMeals;
+            grandEnter += dayEnter;
+            grandOthers += dayOthers;
             grandTotal += dayTotal;
         });
 
-        // 頁面最底部：全旅程總計與每人應付總金額 (Grand Total)
+        // 最底部：全旅程總計 (Grand Total)
         csvContent += "=========================================\n";
-        csvContent += "=== 全旅程總計 (GRAND TOTAL) ===\n";
-        csvContent += "統計項目,全旅程總開銷 (Grand Total Cost)," + currentMembers.map(m => `${m} 應付總額`).join(",") + "\n";
+        csvContent += "=== 全旅程花費總計 (GRAND TOTAL) ===\n";
+        csvContent += fullHeaderStr;
 
-        let grandTotalRow = `全旅程應付總額,$${grandTotal.toFixed(2)}`;
-        currentMembers.forEach(m => {
-            const owed = globalOwedMap[m] || 0;
-            grandTotalRow += `,$${owed.toFixed(2)}`;
-        });
-        csvContent += grandTotalRow + "\n\n";
+        const grandMemberTotals = currentMembers.map(m => `$${globalOwedMap[m].toFixed(2)}`);
+        csvContent += `全旅程總計 (Grand Total),,,$${grandTrans.toFixed(2)},$${grandLodging.toFixed(2)},$${grandMeals.toFixed(2)},$${grandEnter.toFixed(2)},$${grandOthers.toFixed(2)},$${grandTotal.toFixed(2)},,${grandMemberTotals.join(",")}\n\n`;
 
-        // 成員個人消費與代墊完整結算表
-        csvContent += "=== 全旅程成員個人結算表 ===\n";
-        csvContent += "成員名稱," + currentMembers.join(",") + "\n";
+        // 結算總表（清帳）
+        csvContent += "=== 成員個人消費與清帳總表 ===\n";
+        csvContent += "成員 (Member)," + currentMembers.join(",") + "\n";
 
-        let rowPaid = "實際代墊金額 (Paid)";
-        let rowOwed = "個人應付總額 (Owed)";
-        let rowNet = "最終應收/應補 (Net Balance)";
+        let rowPaid = "實際代墊金額(Paid)";
+        let rowOwed = "個人應付總額(Expense)";
+        let rowNet = "最終應收/應付(Net)";
 
         currentMembers.forEach(m => {
             const paid = globalPaidMap[m] || 0;
@@ -608,7 +622,7 @@
         const dest = document.getElementById('destination').value || 'travel';
         
         link.setAttribute("href", url);
-        link.setAttribute("download", `${dest}_每日每人分攤記帳表.csv`);
+        link.setAttribute("download", `${dest}_按天分類記帳模板.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
